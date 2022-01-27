@@ -1,0 +1,248 @@
+# Course Project R Work
+## BAN 530
+### Zachary Rivenbark
+
+```{r}
+library(tidyverse)
+library(GGally)
+library(lmtest)
+library(readr)
+library(lubridate)
+library(VIM)
+library(ggplot2)
+library(gridExtra)
+library(MASS)
+library(caret)
+library(ROCR)
+library(rpart)
+library(rattle)
+library(RColorBrewer)
+library(leaps)
+library(ranger)
+library(cluster)
+library(factoextra)
+library(ggcorrplot)
+```
+
+```{r}
+COVID <- read_csv("March1321-1.csv")
+
+str(COVID)
+```
+
+```{r}
+COVID_data <- COVID %>% dplyr::select(stringency_index, 'Deaths per Million Growth Rate')
+str(COVID_data)
+summary(COVID_data)
+```
+
+```{r}
+COVID_data = COVID_data %>% drop_na()
+
+COVID_data <- COVID_data %>% mutate(stringency_index = as.numeric(as.character(stringency_index)))
+
+COVID_data <- COVID_data %>% mutate(`Deaths per Million Growth Rate` = as.numeric(as.character(`Deaths per Million Growth Rate`)))
+
+summary(COVID_data)
+
+set.seed(1234)
+COVID_sample <- sample_n(COVID_data, 3000)
+str(COVID_sample)
+```
+
+
+```{r}
+set.seed(1234)
+fviz_nbclust(COVID_sample, kmeans, method = "wss") #minimize within-cluster variation
+```
+
+```{r}
+set.seed(1234)
+clusters1 = kmeans(COVID_data, 3)
+```
+
+Visualize the clustering  
+```{R}
+fviz_cluster(clusters1, COVID_data)
+```
+
+
+Attach cluster to dataset
+```{r}
+cluster = data.frame(clusters1$cluster)
+COVID_data = bind_cols(COVID_data,cluster)
+str(COVID_data)
+```
+
+```{r}
+ggplot(COVID_data, aes(x=stringency_index,y='Cases per Million Growth Rate',color=factor(clusters1.cluster))) + geom_point()
+```
+
+Build a regression model.
+
+```{r}
+COVID_sub <- filter(COVID, COVID$location == 'Mexico' | COVID$location == 'United States')
+str(COVID_sub)
+```
+
+```{r}
+mod1 = lm(new_deaths_per_million ~ stringency_index, COVID_sub) #create linear regression model
+summary(mod1) #examine the model
+```
+
+```{r}
+mod2 = lm(new_cases_per_million ~ stringency_index, COVID_sub) #create linear regression model
+summary(mod2) #examine the model
+```
+
+```{r}
+mod3 = lm(new_cases ~ stringency_index, COVID_sub) #create linear regression model
+summary(mod1) #examine the model
+```
+
+##Multiple Regression Model
+```{R}
+COVID_multi <- COVID_sub %>% dplyr::select(new_cases, new_deaths_per_million, stringency_index, new_deaths, cardiovasc_death_rate, male_smokers, female_smokers, diabetes_prevalence)
+
+COVID_multi <- COVID_multi %>% drop_na()
+```
+
+
+Start by building two models: One model that contains all of the predictors and one that is empty.
+```{R}
+allmod = lm(new_deaths_per_million ~., COVID_multi) #use the ~. to include all predictors rather than typing them all in
+summary(allmod)
+
+emptymod = lm(new_deaths_per_million ~1, COVID_multi) #use ~1 to build an empty model
+summary(emptymod)
+```
+
+Backward stepwise  
+```{r}
+#backward
+backmod = stepAIC(allmod, direction = "backward", trace = TRUE) #trace = TRUE shows how the model is built (which variables are removed)
+summary(backmod)
+```
+
+Forward stepwise
+```{r}
+#forward
+forwardmod = stepAIC(emptymod, direction = "forward", scope=list(upper=allmod,lower=emptymod),
+                      trace = TRUE) #trace = TRUE shows how the model is built (which variables                                       are added)
+summary(forwardmod) #note multicollinearity with FullBath with a negative coefficient
+```
+
+## Classification Tree
+
+Get rid of missing data rows
+```{r}
+COVID2 = COVID %>% drop_na(new_deaths_per_million) #delete any row with an NA value
+
+COVID2 <- COVID2 %>% mutate(deaths_per_case = as.numeric(as.character(deaths_per_case)))
+
+COVID2 <- COVID2 %>% mutate(`Deaths per Million Growth Rate` = as.factor(as.character(`Deaths per Million Growth Rate`)))
+
+COVID2 <- COVID2 %>% dplyr::select(-'Deaths per Million Growth Rate')
+
+COVID2 <- COVID2 %>% dplyr::select(-'Cases per Million Growth Rate')
+
+str(COVID2)
+```
+
+Split the data (training and testing)  
+```{r}
+set.seed(123)
+train.rows = createDataPartition(y = COVID2$new_deaths_per_million, p=0.7, list = FALSE) #70% in training
+train = COVID2[train.rows,] 
+test = COVID2[-train.rows,]
+```
+
+Create regression tree  
+```{r}
+regtree1 = rpart(new_deaths_per_million~., method="anova", train)
+fancyRpartPlot(regtree1)
+printcp(regtree1)  
+plotcp(regtree1) 
+```
+Develop predictions on the training set
+```{r}
+train_preds = predict(regtree1)
+head(train_preds) #see first six predictions
+```
+
+Now we can manually calculate the R squared value on train
+```{r}
+SSE = sum((train$new_deaths_per_million - train_preds)^2) #sum of squared residuals from model
+SST = sum((train$new_deaths_per_million - mean(train$new_deaths_per_million))^2) #sum of squared residuals from a "naive" model
+1 - SSE/SST #definition of R squared
+```
+
+Develop predictions on the testing set
+```{r}
+test_preds = predict(regtree1, newdata = test)
+
+test_preds = predict(regtree1, newdata = test)
+```
+
+Now we can manually calculate the R squared value on test
+```{r}
+SSE = sum((test$new_deaths_per_million - test_preds)^2) #sum of squared residuals from model
+SST = sum((test$new_deaths_per_million - mean(test$new_deaths_per_million))^2) #sum of squared residuals from a "naive" model
+1 - SSE/SST #definition of R squared
+```
+
+
+## Classification Tree 2
+
+Get rid of missing data rows
+```{r}
+COVID3 = COVID %>% drop_na(new_deaths_per_million) #delete any row with an NA value
+
+COVID3 = COVID3 %>% dplyr::select(new_cases, new_deaths_per_million, stringency_index, new_deaths, cardiovasc_death_rate, male_smokers, female_smokers, diabetes_prevalence)
+```
+
+Split the data (training and testing)  
+```{r}
+set.seed(123)
+train.rows = createDataPartition(y = COVID3$new_deaths_per_million, p=0.7, list = FALSE) #70% in training
+train3 = COVID3[train.rows,] 
+test3 = COVID3[-train.rows,]
+```
+
+Create regression tree  
+```{r}
+regtree2 = rpart(new_deaths_per_million~., method="anova", train)
+fancyRpartPlot(regtree2)
+printcp(regtree2)  
+plotcp(regtree2) 
+```
+Develop predictions on the training set
+```{r}
+train_preds2 = predict(regtree2)
+head(train_preds2) #see first six predictions
+```
+
+Now we can manually calculate the R squared value on train
+```{r}
+SSE = sum((train3$new_deaths_per_million - train_preds2)^2) #sum of squared residuals from model
+SST = sum((train3$new_deaths_per_million - mean(train3$new_deaths_per_million))^2) #sum of squared residuals from a "naive" model
+1 - SSE/SST #definition of R squared
+```
+
+Develop predictions on the testing set
+```{r}
+test_preds2 = predict(regtree2, newdata = test)
+
+test_preds2 = predict(regtree2, newdata = test)
+```
+
+Now we can manually calculate the R squared value on test
+```{r}
+SSE = sum((test3$new_deaths_per_million - test_preds)^2) #sum of squared residuals from model
+SST = sum((test3$new_deaths_per_million - mean(test$new_deaths_per_million))^2) #sum of squared residuals from a "naive" model
+1 - SSE/SST #definition of R squared
+```
+
+
+
+
